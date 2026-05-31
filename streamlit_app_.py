@@ -1,7 +1,8 @@
 import streamlit as st
 import ephem
 import math
-from datetime import datetime, timezone
+import requests
+from datetime import datetime, timezone, timedelta
 
 st.set_page_config(page_title="AstroAdvisor", page_icon="🔭", layout="wide", initial_sidebar_state="expanded")
 
@@ -24,13 +25,29 @@ h1,h2,h3 { font-family: 'Syne', sans-serif !important; color: #e8f0ff !important
 .meta-pill { font-family: 'Space Mono', monospace; font-size: 0.72rem; color: #5a8fc0; background: rgba(50,100,200,0.12); border: 1px solid rgba(80,130,220,0.2); border-radius: 20px; padding: 2px 10px; }
 .section-header { font-family: 'Space Mono', monospace; font-size: 0.75rem; letter-spacing: 3px; text-transform: uppercase; color: #3a6699; margin: 1.5rem 0 0.8rem 0; padding-bottom: 0.4rem; border-bottom: 1px solid rgba(60,100,180,0.2); }
 .hero-title { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 2.8rem; color: #e8f0ff; letter-spacing: -2px; line-height: 1.1; margin-bottom: 0.3rem; }
-.hero-sub { font-family: 'Space Mono', monospace; font-size: 0.8rem; color: #3a6699; letter-spacing: 2px; margin-bottom: 2rem; }
+.hero-sub { font-family: 'Space Mono', monospace; font-size: 0.8rem; color: #3a6699; letter-spacing: 2px; margin-bottom: 1.5rem; }
 .warn-box { background: rgba(30,20,5,0.8); border: 1px solid rgba(220,150,40,0.3); border-radius: 6px; padding: 0.8rem 1.2rem; color: #c8943a; font-family: 'Space Mono', monospace; font-size: 0.8rem; margin-bottom: 1rem; }
 label, .stLabel { color: #6a8fc0 !important; font-family: 'Space Mono', monospace !important; font-size: 0.78rem !important; }
 hr { border-color: rgba(80,130,220,0.15) !important; }
+
+/* Seeing panel */
+.seeing-panel { background: rgba(8,20,48,0.8); border: 1px solid rgba(80,130,220,0.2); border-radius: 10px; padding: 1.2rem 1.4rem; margin-bottom: 1.5rem; }
+.seeing-title { font-family: 'Space Mono', monospace; font-size: 0.72rem; letter-spacing: 3px; text-transform: uppercase; color: #3a6699; margin-bottom: 1rem; }
+.seeing-row { display: flex; gap: 0.5rem; align-items: flex-end; margin-bottom: 0.4rem; }
+.seeing-bar-wrap { display: flex; flex-direction: column; align-items: center; flex: 1; }
+.seeing-bar-bg { width: 100%; background: rgba(30,50,100,0.4); border-radius: 4px; height: 60px; display: flex; align-items: flex-end; overflow: hidden; }
+.seeing-bar-fill { width: 100%; border-radius: 4px; transition: height 0.3s; }
+.seeing-time { font-family: 'Space Mono', monospace; font-size: 0.6rem; color: #3a5a8a; margin-top: 0.3rem; text-align: center; }
+.seeing-score-label { font-family: 'Space Mono', monospace; font-size: 0.65rem; color: #5a8fc0; text-align: center; margin-top: 0.15rem; }
+.seeing-summary { display: flex; gap: 1.5rem; flex-wrap: wrap; margin-top: 0.8rem; padding-top: 0.8rem; border-top: 1px solid rgba(60,100,180,0.15); }
+.seeing-stat { font-family: 'Space Mono', monospace; font-size: 0.75rem; color: #4a7ab5; }
+.seeing-stat span { color: #7eb8ff; font-weight: 700; }
+.seeing-badge { display: inline-block; font-family: 'Space Mono', monospace; font-size: 0.8rem; padding: 0.35rem 1rem; border-radius: 20px; font-weight: 700; margin-bottom: 0.3rem; }
+.seeing-error { font-family: 'Space Mono', monospace; font-size: 0.78rem; color: #4a6a9a; font-style: italic; padding: 0.5rem 0; }
 </style>
 """, unsafe_allow_html=True)
 
+# ── DSO Catalog ────────────────────────────────────────────────────────────────
 DSO = {
   "nebulae": [
     {"name":"M42","full":"M42 – Orion Nebula","ra":"5:35:17","dec":"-5:23","size":85,"mag":4.0,"con":"Orion","filter_boost":True,"why":"The brightest emission nebula in the sky. Enormous at 85 arcmin — fills any wide-field frame.","tip":"Short subs (30-60s) to avoid core overexposure. Ha filter brings out incredible detail."},
@@ -82,10 +99,11 @@ EQUIPMENT = {
     "Refractor 102mm (714mm f/7)": 714,
     "Newtonian 150mm (750mm f/5)": 750,
     'SCT 8" (2032mm f/10)': 2032,
-    "Dobsonian 10\" (1200mm f/4.7)": 1200,
+    'Dobsonian 10" (1200mm f/4.7)': 1200,
     "Custom": None,
 }
 
+# ── Sky math ──────────────────────────────────────────────────────────────────
 def get_altitude(ra, dec, lat, lon):
     dt = datetime.now(timezone.utc)
     obs = ephem.Observer()
@@ -112,10 +130,7 @@ def score_obj(obj, lat, lon, focal_mm, moon_pct, has_filter):
     alt = get_altitude(obj["ra"], obj["dec"], lat, lon)
     if alt < 15:
         return None, alt
-    if alt >= 45:
-        a = min(100, 55 + (alt - 45) * 0.8)
-    else:
-        a = (alt - 15) / 30 * 55
+    a = min(100, 55 + (alt - 45) * 0.8) if alt >= 45 else (alt - 15) / 30 * 55
     fill = fov_fill(obj["size"], focal_mm)
     if 8 <= fill <= 70:
         f = 100
@@ -139,7 +154,7 @@ def get_difficulty(obj, focal_mm, moon_pct, has_filter):
 def build_why(obj, alt, focal_mm, moon_pct, has_filter):
     parts = [obj["why"]]
     if alt >= 60:
-        parts.append(f"Excellent altitude at {alt:.0f}° tonight — minimal atmospheric distortion.")
+        parts.append(f"Excellent altitude at {alt:.0f}° — minimal atmospheric distortion.")
     elif alt >= 35:
         parts.append(f"Good altitude at {alt:.0f}° — solid imaging window.")
     else:
@@ -157,6 +172,170 @@ def build_why(obj, alt, focal_mm, moon_pct, has_filter):
         else:
             parts.append(f"Moon at {moon_pct:.0f}% — a narrowband filter would help significantly.")
     return " ".join(parts)
+
+# ── Seeing forecast ────────────────────────────────────────────────────────────
+SEEING_LABELS = ["Very poor", "Poor", "Fair", "Good", "Very good", "Excellent"]
+SEEING_COLORS = ["#8b1a1a", "#c84040", "#c8843a", "#c8b820", "#3a9e5f", "#3a7acc"]
+
+def seeing_score(cloud, wind, precip, humidity):
+    if cloud > 85 or precip > 40:
+        return 0.0
+    s = 5.0
+    s -= cloud / 100 * 2.5
+    s -= min(wind, 30) / 30 * 1.5
+    s -= precip / 100 * 1.5
+    s -= max(0, humidity - 70) / 30 * 0.5
+    return round(max(0.0, min(5.0, s)), 2)
+
+@st.cache_data(ttl=1800)
+def fetch_seeing(lat, lon):
+    """Fetch hourly weather from Open-Meteo and compute seeing proxy scores."""
+    url = "https://api.open-meteo.com/v1/forecast"
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "hourly": "cloud_cover,wind_speed_10m,precipitation_probability,relative_humidity_2m,temperature_2m",
+        "current": "cloud_cover,wind_speed_10m,precipitation_probability,relative_humidity_2m,temperature_2m",
+        "forecast_days": 2,
+        "timezone": "auto",
+    }
+    try:
+        r = requests.get(url, params=params, timeout=8)
+        r.raise_for_status()
+        d = r.json()
+    except Exception as e:
+        return None, str(e)
+
+    hourly = d["hourly"]
+    current = d.get("current", {})
+
+    # Build current seeing
+    curr_score = seeing_score(
+        current.get("cloud_cover", 50),
+        current.get("wind_speed_10m", 10),
+        current.get("precipitation_probability", 0),
+        current.get("relative_humidity_2m", 60),
+    )
+
+    # Get next 12 hours starting from now (round down to current hour)
+    now_utc = datetime.now(timezone.utc)
+    results = []
+    for i, t_str in enumerate(hourly["time"]):
+        try:
+            t = datetime.fromisoformat(t_str)
+            # make naive -> UTC for comparison if needed
+            if t.tzinfo is None:
+                t = t.replace(tzinfo=timezone.utc)
+        except Exception:
+            continue
+        if t < now_utc - timedelta(hours=1):
+            continue
+        if len(results) >= 12:
+            break
+        s = seeing_score(
+            hourly["cloud_cover"][i],
+            hourly["wind_speed_10m"][i],
+            hourly["precipitation_probability"][i],
+            hourly["relative_humidity_2m"][i],
+        )
+        results.append({
+            "time": t_str[-5:],   # HH:MM
+            "score": s,
+            "cloud": hourly["cloud_cover"][i],
+            "wind": hourly["wind_speed_10m"][i],
+            "precip": hourly["precipitation_probability"][i],
+            "humidity": hourly["relative_humidity_2m"][i],
+            "temp": hourly["temperature_2m"][i],
+        })
+
+    return {
+        "current_score": curr_score,
+        "current_cloud": current.get("cloud_cover", "?"),
+        "current_wind": current.get("wind_speed_10m", "?"),
+        "current_humidity": current.get("relative_humidity_2m", "?"),
+        "current_temp": current.get("temperature_2m", "?"),
+        "hourly": results,
+    }, None
+
+def render_seeing_panel(lat, lon):
+    data, err = fetch_seeing(lat, lon)
+
+    st.markdown('<div class="seeing-panel">', unsafe_allow_html=True)
+    st.markdown('<div class="seeing-title">🌬 ASTRONOMICAL SEEING FORECAST</div>', unsafe_allow_html=True)
+
+    if err or data is None:
+        st.markdown(f'<div class="seeing-error">Could not load forecast data. Check your internet connection.<br>Error: {err}</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+        return
+
+    # Current conditions badge
+    cs = data["current_score"]
+    ci = min(5, int(round(cs)))
+    badge_color = SEEING_COLORS[ci]
+    label = SEEING_LABELS[ci]
+
+    col_badge, col_stats = st.columns([1, 3])
+    with col_badge:
+        stars = "★" * ci + "☆" * (5 - ci)
+        st.markdown(f"""
+        <div style="text-align:center; padding: 0.5rem;">
+          <div style="font-family:'Space Mono',monospace; font-size:0.65rem; color:#3a5a8a; letter-spacing:2px; margin-bottom:0.4rem;">NOW</div>
+          <div class="seeing-badge" style="background:{badge_color}22; color:{badge_color}; border:1px solid {badge_color}55;">
+            {label}
+          </div>
+          <div style="font-family:'Space Mono',monospace; font-size:0.9rem; color:{badge_color}; margin-top:0.2rem;">{stars}</div>
+          <div style="font-family:'Space Mono',monospace; font-size:0.7rem; color:#3a5a8a; margin-top:0.2rem;">{cs:.1f} / 5.0</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col_stats:
+        st.markdown(f"""
+        <div class="seeing-summary">
+          <div class="seeing-stat">☁ Clouds <span>{data['current_cloud']}%</span></div>
+          <div class="seeing-stat">💨 Wind <span>{data['current_wind']} km/h</span></div>
+          <div class="seeing-stat">💧 Humidity <span>{data['current_humidity']}%</span></div>
+          <div class="seeing-stat">🌡 Temp <span>{data['current_temp']}°C</span></div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # Hourly bar chart (pure HTML/CSS)
+    if data["hourly"]:
+        st.markdown("<div style='margin-top:1rem;'>", unsafe_allow_html=True)
+        bars_html = '<div style="display:flex; gap:3px; align-items:flex-end; height:90px; padding: 0 0.2rem;">'
+        for h in data["hourly"]:
+            s = h["score"]
+            idx = min(5, int(round(s)))
+            color = SEEING_COLORS[idx]
+            bar_h = int(s / 5 * 70) + 4  # px, min 4px
+            bars_html += f"""
+            <div style="flex:1; display:flex; flex-direction:column; align-items:center; gap:2px;">
+              <div style="font-family:'Space Mono',monospace;font-size:0.55rem;color:{color};">{s:.1f}</div>
+              <div style="width:100%; background:rgba(30,50,100,0.3); border-radius:3px; height:70px; display:flex; align-items:flex-end; overflow:hidden;">
+                <div style="width:100%; height:{bar_h}px; background:{color}; border-radius:3px; opacity:0.85;"></div>
+              </div>
+              <div style="font-family:'Space Mono',monospace;font-size:0.55rem;color:#2a4a7a;text-align:center;">{h['time']}</div>
+            </div>"""
+        bars_html += '</div>'
+        st.markdown(bars_html, unsafe_allow_html=True)
+
+        # Legend
+        st.markdown("""
+        <div style="display:flex; gap:1rem; flex-wrap:wrap; margin-top:0.6rem; padding-top:0.5rem; border-top:1px solid rgba(60,100,180,0.15);">
+          <div style="font-family:'Space Mono',monospace;font-size:0.65rem;color:#1e3a5f;">SCORE GUIDE:</div>
+          <div style="font-family:'Space Mono',monospace;font-size:0.65rem;color:#8b1a1a;">0–1 Very poor</div>
+          <div style="font-family:'Space Mono',monospace;font-size:0.65rem;color:#c84040;">1–2 Poor</div>
+          <div style="font-family:'Space Mono',monospace;font-size:0.65rem;color:#c8843a;">2–3 Fair</div>
+          <div style="font-family:'Space Mono',monospace;font-size:0.65rem;color:#c8b820;">3–4 Good</div>
+          <div style="font-family:'Space Mono',monospace;font-size:0.65rem;color:#3a9e5f;">4–5 Very good</div>
+          <div style="font-family:'Space Mono',monospace;font-size:0.65rem;color:#3a7acc;">5 Excellent</div>
+        </div>
+        <div style="font-family:'Space Mono',monospace;font-size:0.6rem;color:#1a2e50;margin-top:0.3rem;">
+          Based on cloud cover, wind speed, precipitation probability & humidity · Data: Open-Meteo (free, no key required)
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown('</div>', unsafe_allow_html=True)  # close panel
+
 
 # ── UI ─────────────────────────────────────────────────────────────────────────
 st.markdown('<div class="hero-title">✦ AstroAdvisor</div>', unsafe_allow_html=True)
@@ -183,15 +362,18 @@ with st.sidebar:
 
 moon_pct = moon_phase()
 now_utc = datetime.now(timezone.utc)
-c1,c2,c3,c4 = st.columns(4)
+c1, c2, c3, c4 = st.columns(4)
 c1.metric("🌙 Moon",  f"{moon_pct:.0f}%")
 c2.metric("📅 Date",  now_utc.strftime("%d %b %Y"))
 c3.metric("🕐 UTC",   now_utc.strftime("%H:%M"))
 c4.metric("🔭 Focal", f"{focal_mm} mm")
 st.markdown("---")
 
+# Always show seeing forecast
+render_seeing_panel(lat, lon)
+
 if not run:
-    st.markdown("""<div style="text-align:center;padding:3rem 1rem;color:#2a4a7a;
+    st.markdown("""<div style="text-align:center;padding:2rem 1rem;color:#2a4a7a;
     font-family:'Space Mono',monospace;font-size:0.85rem;letter-spacing:1px;">
     ← Configure your setup then press FIND MY TARGETS</div>""", unsafe_allow_html=True)
     st.stop()
@@ -251,5 +433,5 @@ with st.spinner("Computing sky positions..."):
 
 st.markdown("---")
 st.markdown(f"""<div style="font-family:'Space Mono',monospace;font-size:0.72rem;color:#1e3a5f;text-align:center;padding:0.5rem;">
-UTC {now_utc.strftime('%Y-%m-%d %H:%M')} · Moon {moon_pct:.0f}% · Focal {focal_mm}mm · {'Narrowband ✓' if has_filter else 'Broadband only'}
+UTC {now_utc.strftime('%Y-%m-%d %H:%M')} · Moon {moon_pct:.0f}% · Focal {focal_mm}mm · {'Narrowband ✓' if has_filter else 'Broadband only'} · Seeing data: Open-Meteo
 </div>""", unsafe_allow_html=True)
