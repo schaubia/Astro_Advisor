@@ -4,6 +4,7 @@ import math
 import requests
 import csv
 import os
+import time
 from datetime import datetime, timezone, timedelta
 
 st.set_page_config(page_title="AstroAdvisor", page_icon="🔭", layout="wide", initial_sidebar_state="expanded")
@@ -219,8 +220,11 @@ def seeing_score(cloud, wind, precip, humidity):
     s = 5.0 - cloud/100*2.5 - min(wind,30)/30*1.5 - precip/100*1.5 - max(0,humidity-70)/30*0.5
     return round(max(0.0, min(5.0, s)), 2)
 
-@st.cache_data(ttl=1800)
+@st.cache_data(ttl=3600)
 def fetch_seeing(lat, lon):
+    # Round coords to 2 dp so minor sidebar nudges don't bust the cache
+    lat = round(lat, 2)
+    lon = round(lon, 2)
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
         "latitude": lat, "longitude": lon,
@@ -228,12 +232,24 @@ def fetch_seeing(lat, lon):
         "current": "cloud_cover,wind_speed_10m,precipitation_probability,relative_humidity_2m,temperature_2m",
         "forecast_days": 2, "timezone": "auto",
     }
-    try:
-        r = requests.get(url, params=params, timeout=8)
-        r.raise_for_status()
-        d = r.json()
-    except Exception as e:
-        return None, str(e)
+    last_err = None
+    d = None
+    for attempt in range(4):
+        try:
+            r = requests.get(url, params=params, timeout=10)
+            if r.status_code == 429:
+                last_err = f"429 rate-limit (retry {attempt + 1})"
+                time.sleep(2 ** attempt)   # 1 s, 2 s, 4 s, 8 s
+                continue
+            r.raise_for_status()
+            d = r.json()
+            break
+        except Exception as e:
+            last_err = str(e)
+            if attempt < 3:
+                time.sleep(2 ** attempt)
+    if d is None:
+        return None, last_err
 
     hourly  = d["hourly"]
     current = d.get("current", {})
