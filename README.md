@@ -201,8 +201,3 @@ All packages are free and open-source.
 - Export session plan as PDF
 - Mosaic planner for large objects
 
----
-
-## License
-
-MIT — free to use, modify, and deploy.
