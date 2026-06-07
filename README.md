@@ -23,13 +23,13 @@ AstroAdvisor tells you exactly what to photograph tonight based on your location
 
 ## Catalog
 
-The bundled `dso_catalog.csv` ships with the app and contains 109 hand-curated objects:
+The bundled `dso_catalog.csv` ships with the app and contains 154 hand-curated objects:
 
 | Type | Count | Subtypes |
 |------|-------|---------|
-| Nebulae | 39 | Emission, planetary, supernova remnant, reflection, dark |
-| Galaxies | 32 | Spiral, elliptical, irregular, interacting |
-| Clusters | 38 | Globular, open |
+| Nebulae | 56 | Emission, planetary, supernova remnant, reflection, dark |
+| Galaxies | 45 | Spiral, elliptical, irregular, interacting |
+| Clusters | 53 | Globular, open |
 
 Each entry includes RA/Dec coordinates, angular size, magnitude, constellation, filter recommendation, a "why tonight" description, and a practical shooting tip.
 
@@ -74,7 +74,7 @@ score = 5.0
 | 4–5 | Very good |
 | 5 | Excellent |
 
-Forecast data is cached for 1 hour. Data source: [Open-Meteo](https://open-meteo.com) — free, no registration required.
+Forecast data is cached for 30 minutes. Data source: [Open-Meteo](https://open-meteo.com) — free, no registration required.
 
 ---
 
@@ -87,12 +87,12 @@ pip install -r requirements.txt
 ```
 
 ```bash
-streamlit run streamlit_app.py
+streamlit run astro_advisor_free.py
 ```
 
 The app opens in your browser at `http://localhost:8501`.
 
-> `dso_catalog.csv` must be in the same directory as `streamlit_app.py`.
+> `dso_catalog.csv` must be in the same directory as `astro_advisor_free.py`.
 
 ---
 
@@ -100,7 +100,7 @@ The app opens in your browser at `http://localhost:8501`.
 
 1. Push all files to a public GitHub repository
 2. Go to [share.streamlit.io](https://share.streamlit.io) and connect your repo
-3. Set the main file to `streamlit_app.py`
+3. Set the main file to `astro_advisor_free.py`
 4. Deploy — no secrets or API keys required
 
 ---
@@ -170,7 +170,7 @@ FOV calculation assumes an **APS-C sensor (23.5 mm wide)**. Full-frame or smalle
 ## File Structure
 
 ```
-streamlit_app.py   ← main Streamlit application
+astro_advisor_free.py   ← main Streamlit application
 dso_catalog.csv         ← bundled DSO catalog (109 objects, must be in same folder)
 requirements.txt        ← Python dependencies
 README.md               ← this file
@@ -201,3 +201,8 @@ All packages are free and open-source.
 - Export session plan as PDF
 - Mosaic planner for large objects
 
+---
+
+## License
+
+MIT — free to use, modify, and deploy.
