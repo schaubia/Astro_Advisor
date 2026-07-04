@@ -4,6 +4,7 @@ import math
 import requests
 import csv
 import os
+import time
 from datetime import datetime, timezone, timedelta
 
 st.set_page_config(page_title="AstroAdvisor", page_icon="🔭", layout="wide", initial_sidebar_state="expanded")
@@ -219,8 +220,11 @@ def seeing_score(cloud, wind, precip, humidity):
     s = 5.0 - cloud/100*2.5 - min(wind,30)/30*1.5 - precip/100*1.5 - max(0,humidity-70)/30*0.5
     return round(max(0.0, min(5.0, s)), 2)
 
-@st.cache_data(ttl=1800)
+@st.cache_data(ttl=3600)
 def fetch_seeing(lat, lon):
+    # Round coords to 2 dp so minor sidebar nudges don't bust the cache
+    lat = round(lat, 2)
+    lon = round(lon, 2)
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
         "latitude": lat, "longitude": lon,
@@ -228,12 +232,24 @@ def fetch_seeing(lat, lon):
         "current": "cloud_cover,wind_speed_10m,precipitation_probability,relative_humidity_2m,temperature_2m",
         "forecast_days": 2, "timezone": "auto",
     }
-    try:
-        r = requests.get(url, params=params, timeout=8)
-        r.raise_for_status()
-        d = r.json()
-    except Exception as e:
-        return None, str(e)
+    last_err = None
+    d = None
+    for attempt in range(4):
+        try:
+            r = requests.get(url, params=params, timeout=10)
+            if r.status_code == 429:
+                last_err = f"429 rate-limit (retry {attempt + 1})"
+                time.sleep(2 ** attempt)   # 1 s, 2 s, 4 s, 8 s
+                continue
+            r.raise_for_status()
+            d = r.json()
+            break
+        except Exception as e:
+            last_err = str(e)
+            if attempt < 3:
+                time.sleep(2 ** attempt)
+    if d is None:
+        return None, last_err
 
     hourly  = d["hourly"]
     current = d.get("current", {})
@@ -357,10 +373,6 @@ with st.sidebar:
     if use_simbad:
         st.caption("⚠ First query may take 10-20s per object type.")
     st.markdown("---")
-    st.markdown("### 📋 Results")
-    top_n = st.slider("Objects per type", min_value=3, max_value=20, value=10,
-                      help="How many top-ranked objects to show for each target type.")
-    st.markdown("---")
     run = st.button("▶  FIND MY TARGETS", use_container_width=True)
 
 moon_pct = moon_phase()
@@ -421,11 +433,11 @@ with st.spinner("Computing sky positions..."):
             if s is not None:
                 scored.append({**obj, "_score": s, "_alt": alt})
         scored.sort(key=lambda x: x["_score"], reverse=True)
-        top5 = scored[:top_n]
+        top5 = scored[:5]
 
         # Header
         source_note = f"  <span class='catalog-badge'>CSV {catalog_count} obj" + (f" + Simbad +{simbad_added}" if use_simbad and simbad_added else "") + "</span>"
-        st.markdown(f'<div class="section-header">{ICONS[ttype]} {LABELS[ttype]} — TOP {len(top5)} of {len(scored)}{source_note}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="section-header">{ICONS[ttype]} {LABELS[ttype]} — TOP {len(top5)}{source_note}</div>', unsafe_allow_html=True)
 
         if not top5:
             st.markdown('<div class="warn-box">No objects above the horizon right now for this type.</div>', unsafe_allow_html=True)
