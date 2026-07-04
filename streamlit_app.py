@@ -417,7 +417,7 @@ with st.sidebar:
     lat = st.number_input("Latitude",  value=42.62, format="%.4f", step=0.01)
     lon = st.number_input("Longitude", value=23.23, format="%.4f", step=0.01)
     st.caption("Default: Vladaya / Sofia")
-    utc_offset = st.number_input("UTC offset (hrs, for local display)", value=round(lon / 15), min_value=-12.0, max_value=14.0, step=0.5,
+    utc_offset = st.number_input("UTC offset (hrs, for local display)", value=float(round(lon / 15)), min_value=-12.0, max_value=14.0, step=0.5,
                                   help="Used only to convert the twilight/dark-sky panel to your local clock. Auto-suggested from longitude — adjust for your actual timezone/DST.")
     st.markdown("---")
     st.markdown("### 🔭 Equipment")
