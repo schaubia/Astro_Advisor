@@ -163,88 +163,47 @@ def moon_phase():
     m.compute(datetime.now(timezone.utc).strftime("%Y/%m/%d %H:%M:%S"))
     return m.phase
 
-# ── Twilight / dark sky windows (computed locally with ephem — no network) ────
-TWILIGHT_HORIZONS = {
-    "sun":          "-0:34",  # geometric sunset/sunrise (standard refraction correction)
-    "civil":        "-6",
-    "nautical":     "-12",
-    "astronomical": "-18",
-}
-
-def get_twilight_times(lat, lon, elevation=600):
-    """
-    Returns, for each threshold, the next setting (evening) and next rising (morning)
-    of the Sun crossing that altitude, all as timezone-aware UTC datetimes.
-    A value of None means the sun doesn't cross that altitude today (e.g. high-latitude
-    summer where it never gets astronomically dark, or polar night).
-    Everything here runs locally via `ephem` — no internet call.
-    """
-    sun = ephem.Sun()
-    out = {}
-    for key, horizon in TWILIGHT_HORIZONS.items():
-        obs = ephem.Observer()
-        obs.lat, obs.lon = str(lat), str(lon)
-        obs.elevation = elevation
-        obs.pressure = 0
-        obs.date = datetime.now(timezone.utc).strftime("%Y/%m/%d %H:%M:%S")
-        obs.horizon = horizon
-        try:
-            setting = obs.next_setting(sun, use_center=True).datetime().replace(tzinfo=timezone.utc)
-        except (ephem.AlwaysUpError, ephem.NeverUpError):
-            setting = None
-        try:
-            rising = obs.next_rising(sun, use_center=True).datetime().replace(tzinfo=timezone.utc)
-        except (ephem.AlwaysUpError, ephem.NeverUpError):
-            rising = None
-        out[key] = {"set": setting, "rise": rising}
-    return out
-
-TWILIGHT_LABELS = {
-    "sun":          ("☀ Sunset",         "☀ Sunrise"),
-    "civil":        ("🌇 Civil dusk",     "🌅 Civil dawn"),
-    "nautical":     ("🌆 Nautical dusk",  "🌃 Nautical dawn"),
-    "astronomical": ("🌑 Astro. dusk — sky fully dark", "🌌 Astro. dawn — sky no longer dark"),
-}
-
-def render_twilight_panel(lat, lon, utc_offset):
-    tw = get_twilight_times(lat, lon)
-
-    def fmt(dt):
-        if dt is None:
-            return "—"
-        local = dt + timedelta(hours=utc_offset)
-        return local.strftime("%H:%M")
-
-    st.markdown('<div class="seeing-panel">', unsafe_allow_html=True)
-    st.markdown('<div style="font-family:\'Space Mono\',monospace;font-size:.72rem;letter-spacing:3px;text-transform:uppercase;color:#3a6699;margin-bottom:1rem;">🌘 DARK SKY WINDOW</div>', unsafe_allow_html=True)
-
-    dusk = tw["astronomical"]["set"]
-    dawn = tw["astronomical"]["rise"]
-    if dusk is None or dawn is None:
-        st.markdown('<div style="font-family:\'Space Mono\',monospace;font-size:.8rem;color:#c8943a;">No true astronomical darkness at this latitude tonight (sun stays above -18°) — check season/latitude.</div>', unsafe_allow_html=True)
-    else:
-        dark_hours = (dawn - dusk).total_seconds() / 3600 if dawn > dusk else ((dawn + timedelta(days=1)) - dusk).total_seconds() / 3600
-        st.markdown(f"""<div style="font-family:'Space Mono',monospace;font-size:.95rem;color:#7eb8ff;margin-bottom:.8rem;">
-          Fully dark from <b style="color:#e8f0ff;">{fmt(dusk)}</b> to <b style="color:#e8f0ff;">{fmt(dawn)}</b>
-          <span style="color:#3a6699;font-size:.75rem;">&nbsp;(~{dark_hours:.1f}h, local time = UTC{utc_offset:+.1f})</span>
-        </div>""", unsafe_allow_html=True)
-
-    cols = st.columns(4)
-    for col, key in zip(cols, ["sun", "civil", "nautical", "astronomical"]):
-        evening_label, morning_label = TWILIGHT_LABELS[key]
-        with col:
-            st.markdown(f"""<div style="font-family:'Space Mono',monospace;font-size:.68rem;color:#4a7ab5;line-height:1.8;">
-              <div style="color:#3a6699;text-transform:uppercase;letter-spacing:1px;margin-bottom:.3rem;">{key}</div>
-              <div>{evening_label}<br><span style="color:#7eb8ff;font-weight:700;">{fmt(tw[key]['set'])}</span></div>
-              <div style="margin-top:.4rem;">{morning_label}<br><span style="color:#7eb8ff;font-weight:700;">{fmt(tw[key]['rise'])}</span></div>
-            </div>""", unsafe_allow_html=True)
-
-    st.markdown('<div style="font-family:\'Space Mono\',monospace;font-size:.6rem;color:#1a2e50;margin-top:.8rem;">Civil: sun -6° (streetlight-level light gone) · Nautical: -12° (horizon no longer visible) · Astronomical: -18° (no residual sunlight — true dark sky). Computed locally via ephem, no network needed.</div>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-
 def fov_fill(size_arcmin, focal_mm, sensor_mm=23.5):
     fov_arcmin = 2 * math.degrees(math.atan(sensor_mm / 2 / focal_mm)) * 60
     return size_arcmin / fov_arcmin * 100
+
+# ── FOV visual diagram ──────────────────────────────────────────────────────────
+FOV_COLORS = {"nebula": "#9a6ff0", "galaxy": "#f0a15a", "cluster": "#5adba0"}
+FOV_RATIO  = {  # width:height style ratio per subtype (visual approximation only,
+                # real objects don't have known position angle in this catalog)
+    "spiral": 0.42, "interacting": 0.45, "irregular": 0.55, "elliptical": 0.75,
+    "dark": 0.35, "supernova_remnant": 0.6,
+}
+
+def render_fov_svg(obj, focal_mm, uid, sensor_w_mm=23.5, sensor_h_mm=15.6):
+    fov_w_arcmin = 2 * math.degrees(math.atan(sensor_w_mm / 2 / focal_mm)) * 60
+    fov_h_arcmin = 2 * math.degrees(math.atan(sensor_h_mm / 2 / focal_mm)) * 60
+
+    box_w = 150.0
+    box_h = box_w * (fov_h_arcmin / fov_w_arcmin)
+    scale = box_w / fov_w_arcmin  # px per arcmin
+
+    size = obj["size_arcmin"]
+    ratio = FOV_RATIO.get(obj.get("subtype", ""), 0.85)
+    obj_w_px = max(3.0, size * scale)
+    obj_h_px = obj_w_px * ratio
+
+    cx, cy = box_w / 2, box_h / 2
+    color = FOV_COLORS.get(obj.get("type", ""), "#7eb8ff")
+    fill_pct = fov_fill(size, focal_mm)
+    overflow = obj_w_px > box_w or obj_h_px > box_h
+    caption = "extends beyond frame — mosaic needed" if overflow else f"{fill_pct:.0f}% frame fill"
+
+    return f"""
+    <div style="display:flex;flex-direction:column;align-items:center;gap:.25rem;">
+      <svg width="{box_w}" height="{box_h}" viewBox="0 0 {box_w} {box_h}" style="background:rgba(4,10,24,.6);border-radius:4px;">
+        <defs><clipPath id="clip{uid}"><rect x="0" y="0" width="{box_w}" height="{box_h}"/></clipPath></defs>
+        <rect x="1" y="1" width="{box_w-2}" height="{box_h-2}" fill="none" stroke="#3a6699" stroke-width="1.2" stroke-dasharray="4,3"/>
+        <ellipse cx="{cx}" cy="{cy}" rx="{obj_w_px/2:.1f}" ry="{obj_h_px/2:.1f}" fill="{color}" fill-opacity="0.35" stroke="{color}" stroke-width="1" clip-path="url(#clip{uid})"/>
+      </svg>
+      <div style="font-family:'Space Mono',monospace;font-size:.6rem;color:#4a7ab5;text-align:center;max-width:150px;">{caption}</div>
+    </div>
+    """
 
 def score_obj(obj, lat, lon, focal_mm, moon_pct, has_filter):
     try:
@@ -417,8 +376,6 @@ with st.sidebar:
     lat = st.number_input("Latitude",  value=42.62, format="%.4f", step=0.01)
     lon = st.number_input("Longitude", value=23.23, format="%.4f", step=0.01)
     st.caption("Default: Vladaya / Sofia")
-    utc_offset = st.number_input("UTC offset (hrs, for local display)", value=float(round(lon / 15)), min_value=-12.0, max_value=14.0, step=0.5,
-                                  help="Used only to convert the twilight/dark-sky panel to your local clock. Auto-suggested from longitude — adjust for your actual timezone/DST.")
     st.markdown("---")
     st.markdown("### 🔭 Equipment")
     scope    = st.selectbox("Telescope / Lens", list(EQUIPMENT.keys()))
@@ -450,7 +407,6 @@ c4.metric("🔭 Focal", f"{focal_mm} mm")
 st.markdown("---")
 
 render_seeing_panel(lat, lon)
-render_twilight_panel(lat, lon, utc_offset)
 
 if not run:
     st.markdown("""<div style="text-align:center;padding:2rem 1rem;color:#2a4a7a;
@@ -518,6 +474,8 @@ with st.spinner("Computing sky positions..."):
                 src_badge = '<span style="font-family:\'Space Mono\',monospace;font-size:.62rem;color:#3a6a3a;background:rgba(20,60,20,.5);border:1px solid rgba(60,150,60,.2);border-radius:10px;padding:1px 7px;margin-left:6px;">live</span>'
             subtype_str = obj.get("subtype","").replace("_"," ").title()
             con_str     = obj.get("constellation","")
+            fov_uid     = f"{ttype}{i}"
+            fov_svg     = render_fov_svg(obj, focal_mm, fov_uid)
             st.markdown(f"""
             <div class="target-card">
               <div style="display:flex;justify-content:space-between;align-items:flex-start;">
@@ -530,14 +488,19 @@ with st.spinner("Computing sky positions..."):
                   {dlabel}
                 </div>
               </div>
-              <div class="card-desc">{why}</div>
-              <div class="card-tip">💡 {obj['tip']}</div>
-              <div class="card-meta">
-                <span class="meta-pill">Alt {obj['_alt']}°</span>
-                <span class="meta-pill">Score {obj['_score']}</span>
-                <span class="meta-pill">{fill:.0f}% frame fill</span>
-                <span class="meta-pill">Mag {obj['mag']}</span>
-                {'<span class="meta-pill">🔴 Filter helps</span>' if obj["filter_boost"] else ''}
+              <div style="display:flex;gap:1rem;align-items:flex-start;margin-top:.4rem;">
+                <div style="flex:1;min-width:0;">
+                  <div class="card-desc">{why}</div>
+                  <div class="card-tip">💡 {obj['tip']}</div>
+                  <div class="card-meta">
+                    <span class="meta-pill">Alt {obj['_alt']}°</span>
+                    <span class="meta-pill">Score {obj['_score']}</span>
+                    <span class="meta-pill">{fill:.0f}% frame fill</span>
+                    <span class="meta-pill">Mag {obj['mag']}</span>
+                    {'<span class="meta-pill">🔴 Filter helps</span>' if obj["filter_boost"] else ''}
+                  </div>
+                </div>
+                <div style="flex-shrink:0;">{fov_svg}</div>
               </div>
             </div>""", unsafe_allow_html=True)
 
