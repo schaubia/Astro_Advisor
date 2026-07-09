@@ -167,6 +167,44 @@ def fov_fill(size_arcmin, focal_mm, sensor_mm=23.5):
     fov_arcmin = 2 * math.degrees(math.atan(sensor_mm / 2 / focal_mm)) * 60
     return size_arcmin / fov_arcmin * 100
 
+# ── FOV visual diagram ──────────────────────────────────────────────────────────
+FOV_COLORS = {"nebula": "#9a6ff0", "galaxy": "#f0a15a", "cluster": "#5adba0"}
+FOV_RATIO  = {  # width:height style ratio per subtype (visual approximation only,
+                # real objects don't have known position angle in this catalog)
+    "spiral": 0.42, "interacting": 0.45, "irregular": 0.55, "elliptical": 0.75,
+    "dark": 0.35, "supernova_remnant": 0.6,
+}
+
+def render_fov_svg(obj, focal_mm, uid, sensor_w_mm=23.5, sensor_h_mm=15.6):
+    fov_w_arcmin = 2 * math.degrees(math.atan(sensor_w_mm / 2 / focal_mm)) * 60
+    fov_h_arcmin = 2 * math.degrees(math.atan(sensor_h_mm / 2 / focal_mm)) * 60
+
+    box_w = 150.0
+    box_h = box_w * (fov_h_arcmin / fov_w_arcmin)
+    scale = box_w / fov_w_arcmin  # px per arcmin
+
+    size = obj["size_arcmin"]
+    ratio = FOV_RATIO.get(obj.get("subtype", ""), 0.85)
+    obj_w_px = max(3.0, size * scale)
+    obj_h_px = obj_w_px * ratio
+
+    cx, cy = box_w / 2, box_h / 2
+    color = FOV_COLORS.get(obj.get("type", ""), "#7eb8ff")
+    fill_pct = fov_fill(size, focal_mm)
+    overflow = obj_w_px > box_w or obj_h_px > box_h
+    caption = "extends beyond frame — mosaic needed" if overflow else f"{fill_pct:.0f}% frame fill"
+
+    return f"""
+    <div style="display:flex;flex-direction:column;align-items:center;gap:.25rem;">
+      <svg width="{box_w}" height="{box_h}" viewBox="0 0 {box_w} {box_h}" style="background:rgba(4,10,24,.6);border-radius:4px;">
+        <defs><clipPath id="clip{uid}"><rect x="0" y="0" width="{box_w}" height="{box_h}"/></clipPath></defs>
+        <rect x="1" y="1" width="{box_w-2}" height="{box_h-2}" fill="none" stroke="#3a6699" stroke-width="1.2" stroke-dasharray="4,3"/>
+        <ellipse cx="{cx}" cy="{cy}" rx="{obj_w_px/2:.1f}" ry="{obj_h_px/2:.1f}" fill="{color}" fill-opacity="0.35" stroke="{color}" stroke-width="1" clip-path="url(#clip{uid})"/>
+      </svg>
+      <div style="font-family:'Space Mono',monospace;font-size:.6rem;color:#4a7ab5;text-align:center;max-width:150px;">{caption}</div>
+    </div>
+    """
+
 def score_obj(obj, lat, lon, focal_mm, moon_pct, has_filter):
     try:
         alt = get_altitude(obj["ra"], obj["dec"], lat, lon)
@@ -323,107 +361,27 @@ st.markdown('<div class="hero-title">✦ AstroAdvisor</div>', unsafe_allow_html=
 st.markdown('<div class="hero-sub">DEEP SKY TARGET PLANNER · NO API KEY NEEDED</div>', unsafe_allow_html=True)
 
 EQUIPMENT = {
-    "RedCat 51 (250mm f/4.9)":        {"focal": 250,  "aperture": 51},
-    "Refractor 80mm ED (480mm f/6)":  {"focal": 480,  "aperture": 80},
-    "Refractor 80mm (600mm f/7.5)":   {"focal": 600,  "aperture": 80},
-    "Refractor 102mm (714mm f/7)":    {"focal": 714,  "aperture": 102},
-    "Newtonian 150mm (750mm f/5)":    {"focal": 750,  "aperture": 150},
-    'SCT 8" (2032mm f/10)':           {"focal": 2032, "aperture": 203},
-    'Dobsonian 10" (1200mm f/4.7)':   {"focal": 1200, "aperture": 254},
+    "RedCat 51 (250mm f/4.9)": 250,
+    "Refractor 80mm ED (480mm f/6)": 480,
+    "Refractor 80mm (600mm f/7.5)": 600,
+    "Refractor 102mm (714mm f/7)": 714,
+    "Newtonian 150mm (750mm f/5)": 750,
+    'SCT 8" (2032mm f/10)': 2032,
+    'Dobsonian 10" (1200mm f/4.7)': 1200,
     "Custom": None,
 }
-
-BORTLE_LABELS = {
-    1: "1 · Excellent dark sky",
-    2: "2 · Typical dark sky",
-    3: "3 · Rural sky",
-    4: "4 · Rural/suburban transition",
-    5: "5 · Suburban sky",
-    6: "6 · Bright suburban sky",
-    7: "7 · Suburban/urban transition",
-    8: "8 · City sky",
-    9: "9 · Inner-city sky",
-}
-
-def recommend_integration(obj, f_ratio, bortle, has_filter):
-    """Heuristic estimate of how many light frames / how much integration
-    time a target needs, given its magnitude, the sky darkness (Bortle),
-    and the optical speed (f-ratio) of the equipment in use.
-
-    This is a rule-of-thumb planning aid, not a precise SNR calculator —
-    real needs vary with camera read noise, QE, and actual sky conditions.
-    """
-    mag = obj["mag"]
-
-    # Fainter objects need more integration; ~1.4x per magnitude step
-    # relative to a mag 8 / Bortle 4 / f5 / no-filter baseline of 3h.
-    mag_factor = 1.4 ** (mag - 8)
-
-    # Brighter (higher-number) Bortle skies swamp signal with background
-    # glow, requiring more integration to reach the same SNR.
-    bortle_factor = 1.25 ** (bortle - 4)
-
-    # A narrowband/UHC filter suppresses skyglow, so it blunts most of
-    # the Bortle penalty for targets that respond to it.
-    if has_filter and obj.get("filter_boost"):
-        bortle_factor = 1 + (bortle_factor - 1) * 0.4
-
-    # Faster optics (lower f-ratio) collect light quicker; time scales
-    # roughly with the square of the f-ratio, relative to f/5.
-    speed_factor = (f_ratio / 5.0) ** 2
-
-    total_hours = 3.0 * mag_factor * bortle_factor * speed_factor
-    total_hours = max(0.5, min(20.0, total_hours))
-
-    # Recommended single-sub length: shorter under brighter skies to
-    # avoid the background swamping the sub before it saturates.
-    if bortle <= 3:
-        sub_length = 300
-    elif bortle <= 5:
-        sub_length = 180
-    elif bortle <= 7:
-        sub_length = 120
-    else:
-        sub_length = 60
-
-    # Very bright cores need shorter subs regardless of sky darkness.
-    if mag < 5:
-        sub_length = min(sub_length, 60)
-
-    # A narrowband filter lets you push subs longer before sky-limiting.
-    if has_filter and obj.get("filter_boost"):
-        sub_length = int(sub_length * 1.5)
-
-    num_subs = max(1, math.ceil(total_hours * 3600 / sub_length))
-    actual_hours = num_subs * sub_length / 3600
-
-    return {
-        "total_hours":  total_hours,
-        "sub_length":   sub_length,
-        "num_subs":     num_subs,
-        "actual_hours": actual_hours,
-    }
 
 with st.sidebar:
     st.markdown("### 📍 Location")
     lat = st.number_input("Latitude",  value=42.62, format="%.4f", step=0.01)
     lon = st.number_input("Longitude", value=23.23, format="%.4f", step=0.01)
     st.caption("Default: Vladaya / Sofia")
-    bortle = st.selectbox("Bortle sky class", list(BORTLE_LABELS.keys()),
-                          index=3, format_func=lambda b: BORTLE_LABELS[b],
-                          help="How dark your sky is. Higher = more light pollution.")
     st.markdown("---")
     st.markdown("### 🔭 Equipment")
-    scope = st.selectbox("Telescope / Lens", list(EQUIPMENT.keys()))
-    eq    = EQUIPMENT[scope]
-    if eq is None:
-        focal_mm    = st.number_input("Focal length (mm)", value=500.0, min_value=50.0, max_value=5000.0)
-        aperture_mm = st.number_input("Aperture (mm)",      value=80.0,  min_value=20.0, max_value=1000.0)
-    else:
-        focal_mm    = float(eq["focal"])
-        aperture_mm = float(eq["aperture"])
-    f_ratio = focal_mm / aperture_mm
-    st.caption(f"f/{f_ratio:.1f}")
+    scope    = st.selectbox("Telescope / Lens", list(EQUIPMENT.keys()))
+    focal_mm = EQUIPMENT[scope]
+    if focal_mm is None:
+        focal_mm = st.number_input("Focal length (mm)", value=500, min_value=50, max_value=5000)
     has_filter = st.checkbox("I have a narrowband / UHC filter", value=True)
     st.markdown("---")
     st.markdown("### 🎯 Target types")
@@ -441,12 +399,11 @@ with st.sidebar:
 
 moon_pct = moon_phase()
 now_utc  = datetime.now(timezone.utc)
-c1,c2,c3,c4,c5 = st.columns(5)
-c1.metric("🌙 Moon",   f"{moon_pct:.0f}%")
-c2.metric("📅 Date",   now_utc.strftime("%d %b %Y"))
-c3.metric("🕐 UTC",    now_utc.strftime("%H:%M"))
-c4.metric("🔭 Focal",  f"{focal_mm:.0f} mm  ·  f/{f_ratio:.1f}")
-c5.metric("🌃 Bortle", bortle)
+c1,c2,c3,c4 = st.columns(4)
+c1.metric("🌙 Moon",  f"{moon_pct:.0f}%")
+c2.metric("📅 Date",  now_utc.strftime("%d %b %Y"))
+c3.metric("🕐 UTC",   now_utc.strftime("%H:%M"))
+c4.metric("🔭 Focal", f"{focal_mm} mm")
 st.markdown("---")
 
 render_seeing_panel(lat, lon)
@@ -517,6 +474,8 @@ with st.spinner("Computing sky positions..."):
                 src_badge = '<span style="font-family:\'Space Mono\',monospace;font-size:.62rem;color:#3a6a3a;background:rgba(20,60,20,.5);border:1px solid rgba(60,150,60,.2);border-radius:10px;padding:1px 7px;margin-left:6px;">live</span>'
             subtype_str = obj.get("subtype","").replace("_"," ").title()
             con_str     = obj.get("constellation","")
+            fov_uid     = f"{ttype}{i}"
+            fov_svg     = render_fov_svg(obj, focal_mm, fov_uid)
             st.markdown(f"""
             <div class="target-card">
               <div style="display:flex;justify-content:space-between;align-items:flex-start;">
@@ -529,33 +488,24 @@ with st.spinner("Computing sky positions..."):
                   {dlabel}
                 </div>
               </div>
-              <div class="card-desc">{why}</div>
-              <div class="card-tip">💡 {obj['tip']}</div>
-              <div class="card-meta">
-                <span class="meta-pill">Alt {obj['_alt']}°</span>
-                <span class="meta-pill">Score {obj['_score']}</span>
-                <span class="meta-pill">{fill:.0f}% frame fill</span>
-                <span class="meta-pill">Mag {obj['mag']}</span>
-                {'<span class="meta-pill">🔴 Filter helps</span>' if obj["filter_boost"] else ''}
+              <div style="display:flex;gap:1rem;align-items:flex-start;margin-top:.4rem;">
+                <div style="flex:1;min-width:0;">
+                  <div class="card-desc">{why}</div>
+                  <div class="card-tip">💡 {obj['tip']}</div>
+                  <div class="card-meta">
+                    <span class="meta-pill">Alt {obj['_alt']}°</span>
+                    <span class="meta-pill">Score {obj['_score']}</span>
+                    <span class="meta-pill">{fill:.0f}% frame fill</span>
+                    <span class="meta-pill">Mag {obj['mag']}</span>
+                    {'<span class="meta-pill">🔴 Filter helps</span>' if obj["filter_boost"] else ''}
+                  </div>
+                </div>
+                <div style="flex-shrink:0;">{fov_svg}</div>
               </div>
             </div>""", unsafe_allow_html=True)
 
-            plan = recommend_integration(obj, f_ratio, bortle, has_filter)
-            filter_note = ("narrowband filter applied to this estimate"
-                            if has_filter and obj["filter_boost"]
-                            else "no filter benefit for this target")
-            with st.expander(f"📊 Exposure plan — {plan['num_subs']}× {plan['sub_length']}s subs (≈{plan['actual_hours']:.1f}h total)"):
-                st.markdown(f"""
-                <div style="font-family:'Space Mono',monospace;font-size:.8rem;color:#9ab0cc;line-height:1.8;">
-                  <b style="color:#7eb8ff;">Suggested lights:</b> {plan['num_subs']} × {plan['sub_length']}s subs<br>
-                  <b style="color:#7eb8ff;">Total integration:</b> ≈ {plan['actual_hours']:.1f} h ({plan['total_hours']:.1f} h target)<br>
-                  <b style="color:#7eb8ff;">Based on:</b> mag {obj['mag']} target · f/{f_ratio:.1f} system · Bortle {bortle} sky · {filter_note}<br>
-                  <span style="color:#5a7fa0;font-style:italic;font-size:.75rem;">Heuristic planning estimate, not a precise SNR calculator — actual needs depend on your camera's read noise, QE, and real-world conditions on the night.</span>
-                </div>
-                """, unsafe_allow_html=True)
-
 st.markdown("---")
 st.markdown(f"""<div style="font-family:'Space Mono',monospace;font-size:.72rem;color:#1e3a5f;text-align:center;padding:.5rem;">
-  UTC {now_utc.strftime('%Y-%m-%d %H:%M')} · Moon {moon_pct:.0f}% · Focal {focal_mm:.0f}mm f/{f_ratio:.1f} · Bortle {bortle} ·
+  UTC {now_utc.strftime('%Y-%m-%d %H:%M')} · Moon {moon_pct:.0f}% · Focal {focal_mm}mm ·
   {'Narrowband ✓' if has_filter else 'Broadband only'} · Catalog: {catalog_count} objects · Seeing: Open-Meteo
 </div>""", unsafe_allow_html=True)

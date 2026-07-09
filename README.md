@@ -14,6 +14,7 @@ AstroAdvisor tells you exactly what to photograph tonight based on your location
 - **Difficulty rating** — Beginner / Intermediate / Advanced based on magnitude, FOV fit, and moon conditions
 - **Top 5 per object type** — nebulae, galaxies, and clusters ranked independently
 - **Astronomical seeing forecast** — 12-hour hourly seeing score derived from cloud cover, wind, precipitation, and humidity via Open-Meteo (free, no key)
+- **Exposure planner** — per-object expander estimating how many light frames / total integration time you'll need, based on the object's magnitude, your sky's Bortle class, your equipment's f-ratio, and whether a filter applies
 - **Bundled CSV catalog** — 109 curated objects, works fully offline
 - **Live Simbad extension** — optional toggle to query the Simbad astronomical database for additional objects at runtime
 - **Zero dependencies on paid APIs** — runs entirely offline after install (Simbad extension requires internet)
@@ -23,13 +24,13 @@ AstroAdvisor tells you exactly what to photograph tonight based on your location
 
 ## Catalog
 
-The bundled `dso_catalog.csv` ships with the app and contains 154 hand-curated objects:
+The bundled `dso_catalog.csv` ships with the app and contains 109 hand-curated objects:
 
 | Type | Count | Subtypes |
 |------|-------|---------|
-| Nebulae | 56 | Emission, planetary, supernova remnant, reflection, dark |
-| Galaxies | 45 | Spiral, elliptical, irregular, interacting |
-| Clusters | 53 | Globular, open |
+| Nebulae | 39 | Emission, planetary, supernova remnant, reflection, dark |
+| Galaxies | 32 | Spiral, elliptical, irregular, interacting |
+| Clusters | 38 | Globular, open |
 
 Each entry includes RA/Dec coordinates, angular size, magnitude, constellation, filter recommendation, a "why tonight" description, and a practical shooting tip.
 
@@ -108,11 +109,23 @@ The app opens in your browser at `http://localhost:8501`.
 ## Usage
 
 1. **Set your location** — latitude and longitude (defaults to Vladaya / Sofia, Bulgaria)
-2. **Choose your equipment** — select from preset telescope/lens profiles or enter a custom focal length
-3. **Filter checkbox** — tick if you have a narrowband or UHC filter
-4. **Select target types** — nebulae, galaxies, clusters, or any combination
-5. **Simbad toggle** — optionally extend results with live database queries
-6. **Press FIND MY TARGETS** — results appear ranked by tonight's score
+2. **Set your Bortle sky class** — how dark your observing site is (1 = pristine, 9 = inner city)
+3. **Choose your equipment** — select from preset telescope/lens profiles (each with focal length and aperture) or enter custom focal length + aperture
+4. **Filter checkbox** — tick if you have a narrowband or UHC filter
+5. **Select target types** — nebulae, galaxies, clusters, or any combination
+6. **Simbad toggle** — optionally extend results with live database queries
+7. **Press FIND MY TARGETS** — results appear ranked by tonight's score
+
+### Exposure plan
+
+Each target card has a **📊 Exposure plan** expander showing a suggested light-frame count and sub length, e.g. `24 × 180s subs (≈1.2h total)`. The estimate combines:
+
+- **Magnitude** — fainter objects need proportionally more integration
+- **Bortle class** — brighter skies need more integration to overcome background glow
+- **f-ratio** — faster optics (lower f-number) collect light quicker, needing less time
+- **Filter** — a narrowband/UHC filter both cuts the Bortle penalty and lets sub length run longer, for targets that respond to it
+
+This is a heuristic planning aid, not a precise SNR calculator — real-world needs still depend on your camera's read noise, QE, and the actual conditions on the night.
 
 ### Reading the cards
 
@@ -195,11 +208,11 @@ All packages are free and open-source.
 ## Planned improvements
 
 - Session timeline — chart showing when each object peaks during the night
-- Visual FOV overlay — compare object angular size to your frame
-- Bortle scale input — refine scoring for your actual sky darkness
+- Standalone FOV planner widget — preview any object at any focal length before running a full search
 - Multiple sensor size profiles (full-frame, Micro 4/3, dedicated astro cameras)
 - Export session plan as PDF
 - Mosaic planner for large objects
+- Extended CSV schema (major/minor axis + position angle) for more accurate FOV shape rendering
 
 ---
 
