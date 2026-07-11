@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.git
+.gitignore
+.streamlit/secrets.toml
+venv/
+.venv/
+.env
+*.md
+.DS_Store

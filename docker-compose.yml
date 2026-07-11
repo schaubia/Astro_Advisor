@@ -1,0 +1,12 @@
+services:
+  astroadvisor:
+    build: .
+    ports:
+      - "8501:8501"
+    restart: unless-stopped
+    # Uncomment to cap resource usage per instance on a shared VPS:
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: "1.0"
+    #       memory: 512M
