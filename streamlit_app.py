@@ -554,6 +554,7 @@ with st.spinner("Computing sky positions..."):
             if obj.get("_source") == "simbad":
                 src_badge = '<span style="font-family:\'Space Mono\',monospace;font-size:.62rem;color:#3a6a3a;background:rgba(20,60,20,.5);border:1px solid rgba(60,150,60,.2);border-radius:10px;padding:1px 7px;margin-left:6px;">live</span>'
             subtype_str = obj.get("subtype","").replace("_"," ").title()
+            filter_badge = ' <span class="meta-pill">🔴 Filter helps</span>' if obj["filter_boost"] else ''
             con_str     = obj.get("constellation","")
             fov_svg     = render_fov_svg(obj, focal_mm, f"{ttype}{i}")
             st.markdown(f"""
@@ -576,8 +577,7 @@ with st.spinner("Computing sky positions..."):
                     <span class="meta-pill">Alt {obj['_alt']}°</span>
                     <span class="meta-pill">Score {obj['_score']}</span>
                     <span class="meta-pill">{fill:.0f}% frame fill</span>
-                    <span class="meta-pill">Mag {obj['mag']}</span>
-                    {'<span class="meta-pill">🔴 Filter helps</span>' if obj["filter_boost"] else ''}
+                    <span class="meta-pill">Mag {obj['mag']}</span>{filter_badge}
                   </div>
                 </div>
                 <div style="flex-shrink:0;">{fov_svg}</div>
