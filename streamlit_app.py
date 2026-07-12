@@ -167,6 +167,44 @@ def fov_fill(size_arcmin, focal_mm, sensor_mm=23.5):
     fov_arcmin = 2 * math.degrees(math.atan(sensor_mm / 2 / focal_mm)) * 60
     return size_arcmin / fov_arcmin * 100
 
+# ── FOV visual diagram ──────────────────────────────────────────────────────────
+FOV_COLORS = {"nebula": "#9a6ff0", "galaxy": "#f0a15a", "cluster": "#5adba0"}
+FOV_RATIO  = {  # width:height style ratio per subtype (visual approximation only,
+                # real objects don't have known position angle in this catalog)
+    "spiral": 0.42, "interacting": 0.45, "irregular": 0.55, "elliptical": 0.75,
+    "dark": 0.35, "supernova_remnant": 0.6,
+}
+
+def render_fov_svg(obj, focal_mm, uid, sensor_w_mm=23.5, sensor_h_mm=15.6):
+    fov_w_arcmin = 2 * math.degrees(math.atan(sensor_w_mm / 2 / focal_mm)) * 60
+    fov_h_arcmin = 2 * math.degrees(math.atan(sensor_h_mm / 2 / focal_mm)) * 60
+
+    box_w = 150.0
+    box_h = box_w * (fov_h_arcmin / fov_w_arcmin)
+    scale = box_w / fov_w_arcmin  # px per arcmin
+
+    size = obj["size_arcmin"]
+    ratio = FOV_RATIO.get(obj.get("subtype", ""), 0.85)
+    obj_w_px = max(3.0, size * scale)
+    obj_h_px = obj_w_px * ratio
+
+    cx, cy = box_w / 2, box_h / 2
+    color = FOV_COLORS.get(obj.get("type", ""), "#7eb8ff")
+    fill_pct = fov_fill(size, focal_mm)
+    overflow = obj_w_px > box_w or obj_h_px > box_h
+    caption = "extends beyond frame — mosaic needed" if overflow else f"{fill_pct:.0f}% frame fill"
+
+    return f"""
+    <div style="display:flex;flex-direction:column;align-items:center;gap:.25rem;">
+      <svg width="{box_w}" height="{box_h}" viewBox="0 0 {box_w} {box_h}" style="background:rgba(4,10,24,.6);border-radius:4px;">
+        <defs><clipPath id="clip{uid}"><rect x="0" y="0" width="{box_w}" height="{box_h}"/></clipPath></defs>
+        <rect x="1" y="1" width="{box_w-2}" height="{box_h-2}" fill="none" stroke="#3a6699" stroke-width="1.2" stroke-dasharray="4,3"/>
+        <ellipse cx="{cx}" cy="{cy}" rx="{obj_w_px/2:.1f}" ry="{obj_h_px/2:.1f}" fill="{color}" fill-opacity="0.35" stroke="{color}" stroke-width="1" clip-path="url(#clip{uid})"/>
+      </svg>
+      <div style="font-family:'Space Mono',monospace;font-size:.6rem;color:#4a7ab5;text-align:center;max-width:150px;">{caption}</div>
+    </div>
+    """
+
 def score_obj(obj, lat, lon, focal_mm, moon_pct, has_filter):
     try:
         alt = get_altitude(obj["ra"], obj["dec"], lat, lon)
@@ -517,6 +555,7 @@ with st.spinner("Computing sky positions..."):
                 src_badge = '<span style="font-family:\'Space Mono\',monospace;font-size:.62rem;color:#3a6a3a;background:rgba(20,60,20,.5);border:1px solid rgba(60,150,60,.2);border-radius:10px;padding:1px 7px;margin-left:6px;">live</span>'
             subtype_str = obj.get("subtype","").replace("_"," ").title()
             con_str     = obj.get("constellation","")
+            fov_svg     = render_fov_svg(obj, focal_mm, f"{ttype}{i}")
             st.markdown(f"""
             <div class="target-card">
               <div style="display:flex;justify-content:space-between;align-items:flex-start;">
@@ -529,14 +568,19 @@ with st.spinner("Computing sky positions..."):
                   {dlabel}
                 </div>
               </div>
-              <div class="card-desc">{why}</div>
-              <div class="card-tip">💡 {obj['tip']}</div>
-              <div class="card-meta">
-                <span class="meta-pill">Alt {obj['_alt']}°</span>
-                <span class="meta-pill">Score {obj['_score']}</span>
-                <span class="meta-pill">{fill:.0f}% frame fill</span>
-                <span class="meta-pill">Mag {obj['mag']}</span>
-                {'<span class="meta-pill">🔴 Filter helps</span>' if obj["filter_boost"] else ''}
+              <div style="display:flex;gap:1rem;align-items:flex-start;margin-top:.4rem;">
+                <div style="flex:1;min-width:0;">
+                  <div class="card-desc">{why}</div>
+                  <div class="card-tip">💡 {obj['tip']}</div>
+                  <div class="card-meta">
+                    <span class="meta-pill">Alt {obj['_alt']}°</span>
+                    <span class="meta-pill">Score {obj['_score']}</span>
+                    <span class="meta-pill">{fill:.0f}% frame fill</span>
+                    <span class="meta-pill">Mag {obj['mag']}</span>
+                    {'<span class="meta-pill">🔴 Filter helps</span>' if obj["filter_boost"] else ''}
+                  </div>
+                </div>
+                <div style="flex-shrink:0;">{fov_svg}</div>
               </div>
             </div>""", unsafe_allow_html=True)
 
